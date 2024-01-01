@@ -1,6 +1,8 @@
 package malte0811.ferritecore.impl;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableTable;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import malte0811.ferritecore.classloading.FastImmutableMapDefiner;
 import malte0811.ferritecore.ducks.FastMapStateHolder;
 import malte0811.ferritecore.fastmap.FastMap;
@@ -9,11 +11,16 @@ import malte0811.ferritecore.fastmap.table.FastmapNeighborTable;
 import malte0811.ferritecore.mixin.config.FerriteConfig;
 import net.minecraft.world.level.block.state.properties.Property;
 
+import java.util.Collection;
 import java.util.Map;
 
 public class StateHolderImpl {
     public static final ThreadLocal<Map<Map<Property<?>, Comparable<?>>, ?>> LAST_STATE_MAP = new ThreadLocal<>();
     public static final ThreadLocal<FastMap<?>> LAST_FAST_STATE_MAP = new ThreadLocal<>();
+
+    // Grants the best possible deduplication by using alike properties to share between block states.
+    public static final Map<Collection<Property<?>>, ImmutableMap<Property<?>, Comparable<?>>[]> propertyMaps
+            = new Object2ObjectOpenHashMap<>();
 
     /**
      * Set up the {@link FastMap} used by the given {@link FastMapStateHolder} to handle neighbors and property lookups.
@@ -46,7 +53,17 @@ public class StateHolderImpl {
         int index = holder.getStateMap().getIndexOf(holder.getVanillaPropertyMap());
         holder.setStateIndex(index);
         if (FerriteConfig.PROPERTY_MAP.isEnabled()) {
-            holder.replacePropertyMap(FastImmutableMapDefiner.makeMap(holder));
+            final FastMap<S> stateMap = holder.getStateMap();
+
+            // FIXME: Not sound if concurrency is to be involved
+            final ImmutableMap<Property<?>, Comparable<?>>[] immutableMaps
+                    = propertyMaps.computeIfAbsent(stateMap.getPropertySet(), set -> new ImmutableMap[stateMap.valueMatrixFactor()]);
+
+            if (immutableMaps[index] == null) {
+                immutableMaps[index] = FastImmutableMapDefiner.makeMap(holder);
+            }
+
+            holder.replacePropertyMap(immutableMaps[index]);
         }
         if (FerriteConfig.POPULATE_NEIGHBOR_TABLE.isEnabled()) {
             holder.setNeighborTable(new FastmapNeighborTable<>(holder));

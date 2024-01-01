@@ -190,6 +190,10 @@ public class FastMap<Value> {
         return valueMatrix.length == 1;
     }
 
+    public int valueMatrixFactor() {
+        return valueMatrix.length;
+    }
+
     public ImmutableSet<Property<?>> getPropertySet() {
         return propertySet;
     }
