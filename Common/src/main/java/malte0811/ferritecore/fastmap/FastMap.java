@@ -13,22 +13,24 @@ import java.util.*;
  * Maps a Property->Value assignment to a value, while allowing fast access to "neighbor" states
  */
 public class FastMap<Value> {
+    // TODO: Fix inadvertent retention of excess data
+    private static final Map<Collection<Property<?>>, FastMap<?>> fastmaps = new HashMap<>();
     private static final int INVALID_INDEX = -1;
 
     private final List<FastMapKey<?>> keys;
-    private final List<Value> valueMatrix;
+    private final Value[] valueMatrix;
     // It might be possible to get rid of this (and the equivalent map for values) by sorting the key vectors by
     // property name (natural order for values) and using a binary search above a given size, but choosing that size
     // would likely be more effort than it's worth
     private final Object2IntMap<Property<?>> toKeyIndex;
     private final ImmutableSet<Property<?>> propertySet;
 
-    public FastMap(
+    FastMap(
             Collection<Property<?>> properties, Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, boolean compact
     ) {
         List<FastMapKey<?>> keys = new ArrayList<>(properties.size());
         int factorUpTo = 1;
-        this.toKeyIndex = new Object2IntOpenHashMap<>();
+        this.toKeyIndex = new Object2IntOpenHashMap<>(properties.size(), 0.25F);
         this.toKeyIndex.defaultReturnValue(INVALID_INDEX);
         for (Property<?> prop : properties) {
             this.toKeyIndex.put(prop, keys.size());
@@ -43,15 +45,46 @@ public class FastMap<Value> {
         }
         this.keys = ImmutableList.copyOf(keys);
 
-        List<Value> valuesList = new ArrayList<>(factorUpTo);
-        for (int i = 0; i < factorUpTo; ++i) {
-            valuesList.add(null);
-        }
-        for (Map.Entry<Map<Property<?>, Comparable<?>>, Value> state : valuesMap.entrySet()) {
-            valuesList.set(getIndexOf(state.getKey()), state.getValue());
-        }
-        this.valueMatrix = Collections.unmodifiableList(valuesList);
+        this.valueMatrix = genValuesMatrix(valuesMap, factorUpTo);
         this.propertySet = ImmutableSet.copyOf(properties);
+    }
+
+    private FastMap(
+            List<FastMapKey<?>> keys,
+            Object2IntMap<Property<?>> toKeyIndex,
+            ImmutableSet<Property<?>> propertySet,
+            Map<Map<Property<?>, Comparable<?>>, Value> valuesMap,
+            int factorUpTo
+    ) {
+        this.keys = keys;
+        this.valueMatrix = genValuesMatrix(valuesMap, factorUpTo);
+        this.toKeyIndex = toKeyIndex;
+        this.propertySet = propertySet;
+    }
+
+    public static <Value> FastMap<Value> of(Collection<Property<?>> properties, Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, boolean compact) {
+        FastMap<Value> map = (FastMap<Value>) fastmaps.get(properties);
+        if (map == null) {
+            map = new FastMap<>(properties, valuesMap, compact);
+            fastmaps.put(properties, map);
+            return map;
+        }
+
+        return new FastMap<>(
+                map.keys,
+                map.toKeyIndex,
+                map.propertySet,
+                valuesMap,
+                map.valueMatrix.length
+        );
+    }
+
+    private Value[] genValuesMatrix(Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, int factorUpTo) {
+        Value[] valuesList = (Value[]) new Object[factorUpTo];
+        for (Map.Entry<Map<Property<?>, Comparable<?>>, Value> state : valuesMap.entrySet()) {
+            valuesList[getIndexOf(state.getKey())] = state.getValue();
+        }
+        return valuesList;
     }
 
     /**
@@ -73,7 +106,7 @@ public class FastMap<Value> {
         if (newIndex < 0) {
             return null;
         }
-        return valueMatrix.get(newIndex);
+        return valueMatrix[newIndex];
     }
 
     /**
@@ -154,7 +187,7 @@ public class FastMap<Value> {
     }
 
     public boolean isSingleState() {
-        return valueMatrix.size() == 1;
+        return valueMatrix.length == 1;
     }
 
     public ImmutableSet<Property<?>> getPropertySet() {
