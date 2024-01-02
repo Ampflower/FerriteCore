@@ -3,6 +3,7 @@ package malte0811.ferritecore.fastmap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Object2IntMaps;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import net.minecraft.world.level.block.state.properties.Property;
 import org.jetbrains.annotations.Nullable;
@@ -28,22 +29,31 @@ public class FastMap<Value> {
     FastMap(
             Collection<Property<?>> properties, Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, boolean compact
     ) {
-        List<FastMapKey<?>> keys = new ArrayList<>(properties.size());
         int factorUpTo = 1;
-        this.toKeyIndex = new Object2IntOpenHashMap<>(properties.size(), 0.25F);
-        this.toKeyIndex.defaultReturnValue(INVALID_INDEX);
-        for (Property<?> prop : properties) {
-            this.toKeyIndex.put(prop, keys.size());
-            FastMapKey<?> nextKey;
-            if (compact) {
-                nextKey = new CompactFastMapKey<>(prop, factorUpTo);
-            } else {
-                nextKey = new BinaryFastMapKey<>(prop, factorUpTo);
+        if (properties.size() == 1) {
+            final Property<?> property = properties.iterator().next();
+            final FastMapKey<?> key = key(property, factorUpTo, compact);
+
+            this.toKeyIndex = Object2IntMaps.singleton(property, 0);
+            this.toKeyIndex.defaultReturnValue(INVALID_INDEX);
+
+            this.keys = ImmutableList.of(key);
+
+            factorUpTo = key.getFactorToNext();
+        } else {
+            List<FastMapKey<?>> keys = new ArrayList<>(properties.size());
+            this.toKeyIndex = new Object2IntOpenHashMap<>(properties.size(), 0.95F);
+            this.toKeyIndex.defaultReturnValue(INVALID_INDEX);
+            for (Property<?> prop : properties) {
+                this.toKeyIndex.put(prop, keys.size());
+                FastMapKey<?> nextKey = key(prop, factorUpTo, compact);
+                keys.add(nextKey);
+                factorUpTo *= nextKey.getFactorToNext();
             }
-            keys.add(nextKey);
-            factorUpTo *= nextKey.getFactorToNext();
+            this.keys = ImmutableList.copyOf(keys);
+
+            ((Object2IntOpenHashMap<Property<?>>) this.toKeyIndex).trim();
         }
-        this.keys = ImmutableList.copyOf(keys);
 
         this.valueMatrix = genValuesMatrix(valuesMap, factorUpTo);
         this.propertySet = ImmutableSet.copyOf(properties);
@@ -77,6 +87,13 @@ public class FastMap<Value> {
                 valuesMap,
                 map.valueMatrix.length
         );
+    }
+
+    private static FastMapKey<?> key(Property<?> property, int factorUpTo, boolean compact) {
+        if (compact) {
+            return new CompactFastMapKey<>(property, factorUpTo);
+        }
+        return new BinaryFastMapKey<>(property, factorUpTo);
     }
 
     private Value[] genValuesMatrix(Map<Map<Property<?>, Comparable<?>>, Value> valuesMap, int factorUpTo) {
